@@ -1,4 +1,4 @@
-# Syndicate Replica Gateway
+# Syndicate Acquisition Gateway
 
 This is a gateway that links a Syndicate volume to an existing, external data set.
 
