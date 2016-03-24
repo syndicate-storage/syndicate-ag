@@ -453,7 +453,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
 
 AG_crawl_update_out:
 
-   if( rc != -EPERM && rc != -ENOMEM && rc != -ENOENT && rc != -EACCES ) {
+   if( rc != 0 && rc != -EPERM && rc != -ENOMEM && rc != -ENOENT && rc != -EACCES ) {
       rc = -EREMOTEIO;
    }
 
@@ -483,7 +483,7 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
    if( rc == 0 ) {
       return 0;
    }
-   else if( rc == -ENOENT ) {
+   else if( rc == -EEXIST ) {
       // try to update 
       rc = AG_crawl_update( core, path, ent );
       if( rc != 0 ) {
@@ -532,7 +532,7 @@ static int AG_crawl_delete( struct AG_state* core, char const* path, struct md_e
 
 AG_crawl_delete_out:
 
-   if( rc != -ENOMEM && rc != -EPERM && rc != -EACCES && rc != -ENOENT ) {
+   if( rc != 0 && rc != -ENOMEM && rc != -EPERM && rc != -EACCES && rc != -ENOENT ) {
       rc = -EREMOTEIO;
    }
 
