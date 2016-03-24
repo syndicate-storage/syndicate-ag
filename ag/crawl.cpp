@@ -483,7 +483,7 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
    if( rc == 0 ) {
       return 0;
    }
-   else if( rc == -ENOENT ) {
+   else if( rc == -EEXIST ) {
       // try to update 
       rc = AG_crawl_update( core, path, ent );
       if( rc != 0 ) {
