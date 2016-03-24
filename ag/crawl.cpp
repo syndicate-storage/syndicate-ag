@@ -440,6 +440,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
    SG_client_WRITE_data_set_mtime( update, &now );
    SG_client_WRITE_data_set_mode( update, ent->mode );
    SG_client_WRITE_data_set_owner_id( update, ent->owner );
+   SG_client_WRITE_data_set_size( update, ent->size );
 
    rc = UG_update( ug, path, update );
 
