@@ -24,6 +24,7 @@
  command string is a 1-character, newline-terminated line:
  * C for 'create'
  * U for 'update'
+ * P for 'put'
  * D for 'delete'
  
  mode string is a two-field newline-terminated line:
@@ -112,7 +113,7 @@ static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
       return -EINVAL;
    }
 
-   if( cmd_type != AG_CRAWL_CMD_CREATE && cmd_type != AG_CRAWL_CMD_UPDATE && cmd_type != AG_CRAWL_CMD_DELETE && cmd_type != AG_CRAWL_CMD_FINISH ) {
+   if( cmd_type != AG_CRAWL_CMD_CREATE && cmd_type != AG_CRAWL_CMD_PUT && cmd_type != AG_CRAWL_CMD_UPDATE && cmd_type != AG_CRAWL_CMD_DELETE && cmd_type != AG_CRAWL_CMD_FINISH ) {
       SG_error("Invalid command '%c'\n", cmd_type );
       return -EINVAL;
    }
