@@ -65,9 +65,11 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
    char type = 0;
    mode_t mode = 0;
    uint64_t size = 0;
+   uint64_t max_read_freshness = 0;
+   uint64_t max_write_freshness = 0;
 
-   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 "\n", &type, &mode, &size );
-   if( rc != 3 ) {
+   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 " %" PRIu64 " %" PRIu64 "\n", &type, &mode, &size, &max_read_freshness, &max_write_freshness );
+   if( rc != 5 ) {
       SG_error("Invalid mode string '%s'\n", md_linebuf );
       return -EINVAL;
    }
@@ -88,12 +90,14 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
    data->mode = mode & 0666;    // force read-only for now
    data->size = size;
    data->name = md_basename( path_linebuf, NULL );
+   data->max_read_freshness = max_read_freshness;
+   data->max_write_freshness = max_write_freshness;
 
    if( data->name == NULL ) {
       return -ENOMEM;
    }
 
-   SG_debug("Parsed (%c, %s, 0%o, %" PRIu64 ")\n", type, data->name, data->mode, data->size );
+   SG_debug("Parsed (%c, %s, 0%o, %" PRIu64 ", read_ttl=%" PRIu64 ", write_ttl=%" PRIu64 ")\n", type, data->name, data->mode, data->size, data->max_read_freshness, data->max_write_freshness );
 
    return 0;
 }
@@ -257,6 +261,7 @@ static int AG_crawl_blocks_reversion( struct UG_state* ug, UG_handle_t* h, uint6
 
    for( uint64_t i = block_id_start; i <= block_id_end; i++ ) {
 
+      SG_debug("Put block info %" PRIu64 "\n", i );
       rc = UG_putblockinfo( ug, i, version, NULL, h );
       if( rc != 0 ) {
          SG_error("UG_putblockinfo(%" PRIu64 ") rc = %d\n", i, rc );
@@ -344,17 +349,20 @@ AG_crawl_create_out:
 // * add blocks for new data (on size increase)
 // * if the size decreased, truncate the file
 // * post new metadata to the MS 
+// if forced_reversion is true, then all blocks will be reversioned
 // This method will go and fetch the previous inode's metadata.
 // return 0 on success
 // return -ENOENT if the entry does not exist on the MS
 // return -EACCES if we're not allowed to read it
 // return -EREMOTEIO on failure to communicate with the MS
-static int AG_crawl_update( struct AG_state* core, char const* path, struct md_entry* ent ) {
+static int AG_crawl_update( struct AG_state* core, char const* path, struct md_entry* ent, bool force_reversion ) {
 
    int rc = 0;
    struct SG_gateway* gateway = AG_state_gateway( core );
    struct ms_client* ms = SG_gateway_ms( gateway );
    struct UG_state* ug = AG_state_ug( core );
+   struct SG_gateway* gw = UG_state_gateway( ug );
+   struct md_syndicate_cache* cache = SG_gateway_cache( gw );
    struct timespec now;
    struct SG_client_WRITE_data* update = NULL;
    uint64_t block_size = ms_client_get_volume_blocksize( ms );
@@ -365,10 +373,11 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
    uint64_t num_blocks = 0;
    int64_t max_version = 0;
    int64_t tmp_version = 0;
+   bool clear_cache = false;    // only do this if we're missing block info (means that we're starting up--any cached data will be stale)
 
    memset( &prev_ent, 0, sizeof(prev_ent) );
 
-   if( ent->file_id == MD_ENTRY_FILE ) {
+   if( ent->type == MD_ENTRY_FILE ) {
 
       // see how we differ 
       h = UG_open( ug, path, O_RDONLY, &rc );
@@ -383,15 +392,23 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
          goto AG_crawl_update_out;
       }
 
-      if( prev_ent.size < ent->size ) {
+      if( prev_ent.size < ent->size || force_reversion ) {
 
-         // got bigger
+         // got bigger, or we're reversioning everything anyway
          // make new blocks
-         new_block_id_start = prev_ent.size / block_size;
+         if( force_reversion ) {
+            new_block_id_start = 0;
+         }
+         else {
+            new_block_id_start = prev_ent.size / block_size;
+         }
+
          num_blocks = (ent->size / block_size) + 1;
 
+         SG_debug("\n\nReversion %" PRIu64 "-%" PRIu64 "; clear %" PRIX64 ".%" PRId64"\n\n", new_block_id_start, num_blocks, prev_ent.file_id, prev_ent.version );
+
          // maximum block version so far... 
-         for( uint64_t i = new_block_id_start; i < num_blocks; i++ ) {
+         for( uint64_t i = new_block_id_start; i <= num_blocks; i++ ) {
 
             rc = UG_getblockinfo( ug, i, &tmp_version, NULL, h );
             if( rc != 0 ) {
@@ -399,12 +416,22 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
                   SG_error("UG_getblockinfo(%" PRIu64 ") rc = %d\n", i, rc );
                   goto AG_crawl_update_out;
                }
+
+               // can only happen if we're starting up
+               clear_cache = true;
             }
             else {
-                if( tmp_version > max_version ) {
-                   max_version = tmp_version;
-                }
+               if( tmp_version > max_version ) {
+                  max_version = tmp_version;
+               }
             }
+         }
+
+         if( clear_cache ) {
+
+            // clear old cached state for the file
+            // TODO: block-granularity 
+            md_cache_clear_file( cache, prev_ent.file_id, prev_ent.version );
          }
 
          rc = AG_crawl_blocks_reversion( ug, h, new_block_id_start, num_blocks, max_version + 1 );
@@ -413,7 +440,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
             goto AG_crawl_update_out;
          }
       }
-      else if( prev_ent.size > ent->size ) {
+      if( prev_ent.size > ent->size ) {
 
          // shrank
          // truncate 
@@ -441,6 +468,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
    SG_client_WRITE_data_set_mode( update, ent->mode );
    SG_client_WRITE_data_set_owner_id( update, ent->owner );
    SG_client_WRITE_data_set_size( update, ent->size );
+   SG_client_WRITE_data_set_refresh( update, ent->max_read_freshness, ent->max_write_freshness );
 
    rc = UG_update( ug, path, update );
 
@@ -480,13 +508,19 @@ AG_crawl_update_out:
 static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entry* ent ) {
     
    int rc = 0;
+
    rc = AG_crawl_create( core, path, ent );
    if( rc == 0 ) {
       return 0;
    }
    else if( rc == -EEXIST ) {
-      // try to update 
-      rc = AG_crawl_update( core, path, ent );
+
+      // file already exists. 
+      // force reversion 
+      ent->version ++;
+
+      // try to update, but update all blocks too
+      rc = AG_crawl_update( core, path, ent, true );
       if( rc != 0 ) {
          SG_error("AG_crawl_update('%s') rc = %d\n", path, rc );
       }
@@ -573,7 +607,7 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
    
       case AG_CRAWL_CMD_UPDATE: {
      
-         rc = AG_crawl_update( core, path, ent );
+         rc = AG_crawl_update( core, path, ent, false );
          if( rc != 0 ) {
              SG_error("AG_crawl_update(%s) rc = %d\n", path, rc );
          }
