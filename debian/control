@@ -7,7 +7,8 @@ Build-Depends: debhelper (>= 9), pkg-config, libsyndicate1-dev, libsyndicate-ug1
 
 Package: syndicate-ag
 Architecture: any
-Depends:  ${shlibs:Depends}, ${misc:Depends}
+Depends:  ${shlibs:Depends}, ${misc:Depends}, python
 Description: Syndicate Acquisition Gateway
- This is a gateway that links a Syndicate volume to an existing, external data set.
+ This is a gateway that links a Syndicate volume to an existing, external 
+ data set.
 
