@@ -41,11 +41,11 @@
 #include "crawl.h"
 #include "core.h"
 
-#define AG_CRAWL_CMD_CREATE  'C'
-#define AG_CRAWL_CMD_PUT     'P'  // create-or-update
-#define AG_CRAWL_CMD_UPDATE  'U'
-#define AG_CRAWL_CMD_DELETE  'D'
-#define AG_CRAWL_CMD_FINISH  'F'        // indicates that there are no more datasets to crawl
+#define AG_CRAWL_CMD_CREATE  'C'    // create, but fail if the entry exists
+#define AG_CRAWL_CMD_PUT     'P'    // create-or-update
+#define AG_CRAWL_CMD_UPDATE  'U'    // update, but fail if the entry doesn't exist
+#define AG_CRAWL_CMD_DELETE  'D'    // delete, but fail if the entry doesn't exist
+#define AG_CRAWL_CMD_FINISH  'F'    // indicates that there are no more datasets to crawl
 
 // indexes into a single stanza
 #define AG_CRAWL_STANZA_CMD 0
@@ -117,7 +117,12 @@ static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
       return -EINVAL;
    }
 
-   if( cmd_type != AG_CRAWL_CMD_CREATE && cmd_type != AG_CRAWL_CMD_PUT && cmd_type != AG_CRAWL_CMD_UPDATE && cmd_type != AG_CRAWL_CMD_DELETE && cmd_type != AG_CRAWL_CMD_FINISH ) {
+   if( cmd_type != AG_CRAWL_CMD_CREATE &&
+       cmd_type != AG_CRAWL_CMD_PUT &&
+       cmd_type != AG_CRAWL_CMD_UPDATE &&
+       cmd_type != AG_CRAWL_CMD_DELETE &&
+       cmd_type != AG_CRAWL_CMD_FINISH ) {
+
       SG_error("Invalid command '%c'\n", cmd_type );
       return -EINVAL;
    }
@@ -272,6 +277,7 @@ static int AG_crawl_blocks_reversion( struct UG_state* ug, UG_handle_t* h, uint6
    return rc;
 }
 
+
 // handle a 'create' command
 // return 0 on success
 // return -ENOMEM on OOM
@@ -403,7 +409,10 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
             new_block_id_start = prev_ent.size / block_size;
          }
 
-         num_blocks = (ent->size / block_size) + 1;
+         num_blocks = (ent->size / block_size);
+         if( ent->size % block_size != 0 ) {
+            num_blocks ++;
+         }
 
          SG_debug("\n\nReversion %" PRIu64 "-%" PRIu64 "; clear %" PRIX64 ".%" PRId64"\n\n", new_block_id_start, num_blocks, prev_ent.file_id, prev_ent.version );
 
