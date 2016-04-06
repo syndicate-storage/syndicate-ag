@@ -17,7 +17,6 @@
 #include "server.h"
 #include "core.h"
 
-
 // get a manifest on cache miss
 // none of the blocks will have hashes; instead, we will serve signed blocks 
 // return 0 on success, and fill in *manifest 
@@ -45,6 +44,8 @@ static int AG_server_manifest_get( struct SG_gateway* gateway, struct SG_request
       UG_state_unlock( ug_core );
       return rc;
    }
+
+   // TODO: uncache all manifests on start; re-generate them lazily here
 
    inode = (struct UG_inode*)fskit_entry_get_user_data( fent );
 
@@ -163,6 +164,8 @@ static int AG_server_block_get( struct SG_gateway* gateway, struct SG_request_da
          SG_chunk_free( &tmp_chunk );
          goto AG_server_block_get_finish;
       }
+         
+      SG_chunk_free( &tmp_chunk );
    }
    else {
       
@@ -409,6 +412,105 @@ AG_server_chunk_serialize_finish:
 }
 
 
+// refresh a file on remote request
+// simply forward the request to the driver, and if the driver decides
+// that the file still exists, it will ask the AG to re-crawl it (or 
+// delete it if it doesn't exist).
+// return 0 on success
+// return -ENOMEM on OOM 
+static int AG_server_refresh( struct SG_gateway* gateway, struct SG_request_data* reqdat, void* cls ) {
+   
+   int rc = 0;
+   int64_t worker_rc = 0;
+   struct ms_client* ms = SG_gateway_ms( gateway );
+   struct UG_state* ug_core = (struct UG_state*)SG_gateway_cls( gateway );
+
+   UG_state_rlock( ug_core );
+
+   struct AG_state* core = (struct AG_state*)UG_state_cls( ug_core );
+   struct SG_proc_group* group = NULL;
+   struct SG_proc* proc = NULL;
+   SG_messages::DriverRequest driver_req;
+
+   AG_state_rlock( core );
+   
+   // find a refresh
+   group = SG_driver_get_proc_group( SG_gateway_driver(gateway), "refresh" );
+   if( group != NULL && SG_proc_group_size( group ) > 0 ) {
+      
+      // get a free process
+      proc = SG_proc_group_acquire( group );
+      if( proc == NULL ) {
+      
+         // nothing running
+         rc = -ENODATA;
+         goto AG_server_block_get_finish;
+      }
+      
+      // ask for the file
+      rc = SG_proc_request_init( ms, reqdat, &driver_req );
+      if( rc != 0 ) {
+
+         SG_error("SG_proc_request_init rc = %d\n", rc );
+         rc = -EIO;
+
+         goto AG_server_block_get_finish;
+      }
+
+      rc = SG_proc_write_request( SG_proc_stdin( proc ), &driver_req );
+      if( rc != 0 ) {
+
+         SG_error("SG_proc_write_request rc = %d\n", rc );
+         rc = -EIO;
+
+         goto AG_server_block_get_finish;
+      }
+     
+      // get error code 
+      rc = SG_proc_read_int64( SG_proc_stdout_f( proc ), &worker_rc );
+      if( rc < 0 ) {
+         
+         SG_error("SG_proc_read_int64('ERROR') rc = %d\n", rc );
+         rc = -EIO;
+         
+         goto AG_server_block_get_finish;
+      }
+      
+      // bail if the gateway had a problem
+      if( worker_rc < 0 ) {
+        
+         SG_error("Request to worker %d failed, rc = %d\n", SG_proc_pid( proc ), (int)worker_rc );
+
+         if( worker_rc == -ENOENT ) { 
+             rc = -ENOENT;
+         }
+         else {
+             rc = -EIO;
+         }
+
+         goto AG_server_block_get_finish;
+      }
+   }
+   else {
+     
+      // TODO: log for now, but this will be an error 
+      SG_debug("Refresh request on '%s' (%" PRIX64 ".%" PRId64 ")\n", reqdat->fs_path, reqdat->file_id, reqdat->file_version );
+      rc = 0;
+   }
+   
+AG_server_block_get_finish:
+
+   if( group != NULL && proc != NULL ) {
+      SG_proc_group_release( group, proc );
+   }
+
+   AG_state_unlock( core );
+   UG_state_unlock( ug_core );
+   return rc;
+}
+
+
+
 // set up the gateway's method implementation 
 // always succeeds
 int AG_server_install_methods( struct SG_gateway* gateway ) {
@@ -426,6 +528,9 @@ int AG_server_install_methods( struct SG_gateway* gateway ) {
    
    SG_impl_serialize( gateway, AG_server_chunk_serialize );
    SG_impl_deserialize( gateway, AG_server_chunk_deserialize );
+
+   // allow UGs to ask for refreshes 
+   SG_impl_refresh( gateway, AG_server_refresh );
 
    return 0;
 } 
