@@ -491,6 +491,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
 
 AG_crawl_update_out:
 
+   md_entry_free( &prev_ent );
    if( rc != 0 && rc != -EPERM && rc != -ENOMEM && rc != -ENOENT && rc != -EACCES ) {
       rc = -EREMOTEIO;
    }
