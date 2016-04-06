@@ -19,12 +19,13 @@
 #include "syndicate-ag.h"
 
 #define AG_DEFAULT_DRIVER_EXEC_STR  "/usr/local/lib/syndicate/ag-driver"
-#define AG_DRIVER_NUM_ROLES  4
+#define AG_DRIVER_NUM_ROLES 5
 char const* AG_DRIVER_ROLES[ AG_DRIVER_NUM_ROLES ] = {
    "serialize",
    "deserialize",
    "read",
-   "crawl"
+   "crawl",
+   "refresh"
 };
 
 // core AG control structure
