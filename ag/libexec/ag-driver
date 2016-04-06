@@ -30,14 +30,15 @@ import syndicate.util.gateway as gateway
 
 if __name__ == "__main__":
   
-   # it's okay if the driver doesn't have a 'serialize' or 'deserialize' method 
+   # it's okay if the driver doesn't have a 'serialize', 'deserialize', or 'refresh' method method 
    default_callbacks = {
       'serialize': None,
-      'deserialize': None
+      'deserialize': None,
+      'refresh': None
    }
 
-   usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'serialize', 'deserialize'], \
-                                             ['read', 'next_dataset', 'serialize', 'deserialize'],
+   usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'refresh', 'serialize', 'deserialize'], \
+                                             ['read', 'next_dataset', 'refresh', 'serialize', 'deserialize'],
                                              default_callbacks=default_callbacks )
   
    # ready to go!
@@ -109,27 +110,23 @@ if __name__ == "__main__":
                    # wait to die 
                    time.sleep(1)
 
-   else:
-      
-      while True:
-         
-         # read request, delete, write back the status code
-         request = gateway.read_request( sys.stdin )
-         if request is None:
-            sys.exit(3)
-        
-         print >> sys.stderr, "delete %s" % gateway.request_to_storage_path(request)
+   elif usage == "refresh":
+       while True:
+          request = gateway.read_request( sys.stdin )
+          if request is None:
+              sys.exit(3)
 
-         try:
-            rc = driver_mod.delete_chunk( request, driver_mod.CONFIG, driver_mod.SECRETS )
-         except Exception, e:
-            print >> sys.stderr, "delete_chunk failed"
-            print >> sys.stderr, traceback.format_exc()
-            sys.exit(4)
-         
-         # return the rc 
-         print >> sys.stderr, "delete status: %s" % rc
-         gateway.write_int( sys.stdout, rc )
-         sys.stdout.flush()
-         sys.stderr.flush()
-         
+          print >> sys.stderr, "refresh %s" % request.path 
+          try:
+              rc = driver_mod.refresh( request, driver_mod.CONFIG, driver_mod.SECRETS )
+          except Exception, e:
+              print >> sys.stderr, "refresh failed"
+              print >> sys.stderr, traceback.format_exc()
+              sys.exit(4) 
+
+          # return rc 
+          print >> sys.stderr, "refresh status: %s" % rc 
+          gateway.write_int( sys.stdout, rc )
+          sys.stdout.flush()
+          sys.stderr.flush()
+
