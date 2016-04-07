@@ -16,48 +16,85 @@
 
 #include "server.h"
 #include "core.h"
+#include "crawl.h"
 
 // get a manifest on cache miss
-// none of the blocks will have hashes; instead, we will serve signed blocks 
+// none of the blocks will have hashes; instead, we will serve signed blocks
+// generate a wholly new manifest 
 // return 0 on success, and fill in *manifest 
 // return -ENOMEM on OOM
 // return -ENOENT if the manifest is not present 
 static int AG_server_manifest_get( struct SG_gateway* gateway, struct SG_request_data* reqdat, struct SG_manifest* manifest, uint64_t hints, void* cls ) {
    
    int rc = 0;
-   struct fskit_entry* fent = NULL;
-   struct UG_state* ug_core = (struct UG_state*)SG_gateway_cls( gateway );
-
-   UG_state_rlock( ug_core );
-
-   struct AG_state* core = (struct AG_state*)UG_state_cls( ug_core );
-   struct fskit_core* fs = UG_state_fs( ug_core );
+   UG_handle_t* fh = NULL;
+   struct md_entry ent_data;
+   struct ms_client* ms = SG_gateway_ms( gateway );
+   uint64_t max_block = 0;
+   uint64_t new_version = 0;
    struct UG_inode* inode = NULL;
+   struct UG_state* ug_core = (struct UG_state*)SG_gateway_cls( gateway );
+   uint64_t block_size = ms_client_get_volume_blocksize( ms );
+   struct timespec ts;
+   
+   memset( &ent_data, 0, sizeof(struct md_entry) );
 
-   AG_state_rlock( core );
-
-   // we're always the coordinator, so this is always fresh 
-   fent = fskit_entry_resolve_path( fs, reqdat->fs_path, 0, 0, false, &rc );
-   if( fent == NULL ) {
-
-      AG_state_unlock( core );
-      UG_state_unlock( ug_core );
-      return rc;
+   rc = UG_stat_raw( ug_core, reqdat->fs_path, &ent_data );
+   if( rc != 0 ) {
+      SG_error("UG_stat_raw('%s') rc = %d\n", reqdat->fs_path, rc );
+      goto AG_server_manifest_get_end;
    }
 
-   // TODO: uncache all manifests on start; re-generate them lazily here
+   max_block = (ent_data.size / block_size);
+   if( ent_data.size % block_size > 0 ) {
+      max_block++;
+   }
 
-   inode = (struct UG_inode*)fskit_entry_get_user_data( fent );
+   md_entry_free( &ent_data );
 
+   // pick version to be the current millisecond
+   // TODO find something with higher entropy
+   clock_gettime( CLOCK_REALTIME, &ts );
+   new_version = ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
+
+   fh = UG_open( ug_core, reqdat->fs_path, O_RDONLY, &rc );
+   if( fh == NULL ) {
+      SG_error("UG_open('%s') rc = %d\n", reqdat->fs_path, rc );
+      goto AG_server_manifest_get_end;
+   }
+
+   rc = AG_crawl_blocks_reversion( ug_core, fh, 0, max_block, new_version );
+   if( rc != 0 ) {
+      SG_error("AG_crawl_blocks_reversion('%s' 0-%" PRIu64 ") rc = %d\n", reqdat->fs_path, max_block );
+      goto AG_server_manifest_get_end;
+   }
+
+   // export manifest 
+   UG_handle_rlock( fh );
+   inode = UG_handle_inode( fh );
+
+   UG_inode_rlock( inode );
    rc = SG_manifest_dup( manifest, UG_inode_manifest( inode ) );
-   fskit_entry_unlock( fent );
+   UG_inode_unlock( inode );
+   inode = NULL;
+
+   UG_handle_unlock( fh );
 
    if( rc != 0 ) {
-      SG_error("SG_manifest_dup('%s') rc = %d\n", reqdat->fs_path, rc );
+      SG_error("SG_manifest_dup rc = %d\n", rc );
+      goto AG_server_manifest_get_end;
    }
 
-   AG_state_unlock( core );
-   UG_state_unlock( ug_core );
+AG_server_manifest_get_end:
+   
+   if( fh != NULL ) {
+      rc = UG_close( ug_core, fh );
+      fh = NULL;
+      if( rc != 0 ) {
+         SG_error("UG_close('%s') rc = %d\n", reqdat->fs_path, rc );
+      }
+   }
+
    return rc;
 }
 
