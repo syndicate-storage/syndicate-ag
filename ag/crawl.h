@@ -26,6 +26,7 @@
 extern "C" {
 
 int AG_crawl_next_entry( struct AG_state* ag );
+int AG_crawl_blocks_reversion( struct UG_state* ug, UG_handle_t* h, uint64_t block_id_start, uint64_t block_id_end, int64_t version );
 
 }
 #endif
