@@ -260,7 +260,7 @@ static int AG_crawl_parse_stanza( char** lines, int* cmd, char** path, struct md
 // set the version for a range of blocks
 // return 0 on success
 // return negative on error
-static int AG_crawl_blocks_reversion( struct UG_state* ug, UG_handle_t* h, uint64_t block_id_start, uint64_t block_id_end, int64_t version ) {
+int AG_crawl_blocks_reversion( struct UG_state* ug, UG_handle_t* h, uint64_t block_id_start, uint64_t block_id_end, int64_t version ) {
 
    int rc = 0;
 
@@ -452,8 +452,23 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
       if( prev_ent.size > ent->size ) {
 
          // shrank
+         // mark manifest as fresh (so truncate doesn't go try to fetch it)
+         // then we'll re-generate it ourselves
+         /*
+         UG_handle_rlock( h );
+
+         inode = UG_handle_inode( h );
+
+         UG_inode_wlock( inode );
+         UG_inode_set_read_stale( inode, false );
+         UG_inode_set_refresh_time_now( inode );
+         UG_inode_unlock( inode );
+         
+         UG_handle_unlock( h );
+         */
+
          // truncate 
-         rc = UG_truncate( ug, path, ent->size );
+         rc = UG_ftruncate( ug, ent->size, h );
          if( rc != 0 ) {
             SG_error("UG_truncate('%s', %" PRIu64 ") rc = %d\n", path, ent->size, rc );
             goto AG_crawl_update_out;
