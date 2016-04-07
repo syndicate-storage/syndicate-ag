@@ -59,6 +59,8 @@ struct AG_state* AG_init( int argc, char** argv ) {
    int rc = 0;
    struct UG_state* ug = NULL;
    struct AG_state* ag = NULL;
+   struct SG_gateway* gateway = NULL;
+   struct md_syndicate_cache* cache = NULL;
    struct md_opts* overrides = md_opts_new( 1 );
    
    if( overrides == NULL ) {
@@ -103,6 +105,11 @@ struct AG_state* AG_init( int argc, char** argv ) {
    // add AG server-side behaviors
    AG_server_install_methods( AG_state_gateway( ag ) ); 
 
+   // clear cache  
+   gateway = UG_state_gateway( ug );
+   cache = SG_gateway_cache( gateway );
+   md_cache_evict_all( cache );
+   
    return ag;
 }
 
