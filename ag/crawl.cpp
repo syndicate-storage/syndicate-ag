@@ -569,31 +569,14 @@ static int AG_crawl_delete( struct AG_state* core, char const* path, struct md_e
 
    int rc = 0;
    struct UG_state* ug = AG_state_ug( core );
-
-   if( ent->type == MD_ENTRY_FILE ) {
-      
-      rc = UG_unlink( ug, path );
-      if( rc != 0 ) {
-
-         SG_error("UG_unlink(%s) rc = %d\n", path, rc );
-         goto AG_crawl_delete_out;
-      }
-   }
    
-   else {
+   rc = UG_rmtree( ug, path );
+   if( rc != 0 ) {
 
-      rc = UG_rmdir( ug, path );
-      if( rc != 0 ) {
-
-         SG_error("UG_rmdir(%s) rc = %d\n", path, rc );
-         goto AG_crawl_delete_out;
+      SG_error("UG_rmdir(%s) rc = %d\n", path, rc );
+      if( rc != -ENOMEM && rc != -EPERM && rc != -EACCES && rc != -ENOENT ) {
+          rc = -EREMOTEIO;
       }
-   }
-
-AG_crawl_delete_out:
-
-   if( rc != 0 && rc != -ENOMEM && rc != -EPERM && rc != -EACCES && rc != -ENOENT ) {
-      rc = -EREMOTEIO;
    }
 
    return rc;
