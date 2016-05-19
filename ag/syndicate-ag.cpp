@@ -278,6 +278,12 @@ static void* AG_crawl_loop( void* cls ) {
       AG_crawl_consume_stanzas( ag, &stanzas, &sockets );
    }
 
+   // tell all crawlers that we're exiting 
+   for( int i = 0; i < num_crawlers; i++ ) {
+      SG_debug("kill crawler %d\n", crawl_pids[i] );
+      kill( crawl_pids[i], SIGTERM );
+   }
+
    SG_debug("%s", "Crawler thread exit\n");
    return NULL;
 }
@@ -315,7 +321,6 @@ int main( int argc, char** argv ) {
 
    // stop crawler 
    g_running = false;
-   pthread_cancel( crawl_thread );
    pthread_join( crawl_thread, NULL );
 
    // stop gateway 
