@@ -96,7 +96,12 @@ class CrawlThread( threading.Thread ):
        
         try:
             crawl_thread.running = False
-            crawl_thread.sock.close()
+
+            try:
+                crawl_thread.sock.close()
+            except:
+                pass
+
             crawl_thread.join()
             crawl_thread = None
         except Exception, e:
@@ -123,14 +128,13 @@ class CrawlThread( threading.Thread ):
         while self.running and have_more:
             # next dataset 
             try:
-
                 # set up connection to AG
+                gateway.log_error("Waiting for AG connection")
                 connection, address = self.sock.accept()
                 self.connection = connection
                 self.address = address
-
             except:
-                continue
+                break
             
             # serve up new dataset
             try:
@@ -151,9 +155,9 @@ class CrawlThread( threading.Thread ):
 
                 # we're done here
                 self.running = False
-
-                gateway.log_error("closing socket")
                 self.sock.close()
+            
+            self.connection.close()
                 
         return
 
@@ -224,7 +228,6 @@ if __name__ == "__main__":
        # save it globally, and configure the `gateway` package 
        # to use it
        crawl_thread = CrawlThread( unix_socket_path, driver_mod )
-       crawl_thread.daemon = True
        gateway.set_crawl_rendezvous_func( CrawlThread.crawl_rendezvous )
        atexit.register( CrawlThread.crawl_stop )
        crawl_thread.start()
