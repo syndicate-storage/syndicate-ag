@@ -470,16 +470,17 @@ static int AG_server_refresh( struct SG_gateway* gateway, struct SG_request_data
    SG_messages::DriverRequest driver_req;
 
    AG_state_rlock( core );
-   
+
    // find a refresh
-   group = SG_driver_get_proc_group( SG_gateway_driver(gateway), "refresh" );
+   group = SG_driver_get_proc_group( SG_gateway_driver(gateway), "crawl" );
    if( group != NULL && SG_proc_group_size( group ) > 0 ) {
       
       // get a free process
-      proc = SG_proc_group_acquire( group );
+      proc = SG_proc_group_timed_acquire( group, -1, &rc );
       if( proc == NULL ) {
       
          // nothing running
+         SG_debug("No free processes in the 'crawl' group: SG_proc_group_timed_acquire rc = %d\n", rc);
          rc = -ENODATA;
          goto AG_server_block_get_finish;
       }
@@ -530,7 +531,6 @@ static int AG_server_refresh( struct SG_gateway* gateway, struct SG_request_data
    }
    else {
      
-      // TODO: log for now, but this will be an error 
       SG_debug("Refresh request on '%s' (%" PRIX64 ".%" PRId64 ")\n", reqdat->fs_path, reqdat->file_id, reqdat->file_version );
       rc = 0;
    }
