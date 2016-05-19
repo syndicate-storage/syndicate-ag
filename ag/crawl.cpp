@@ -41,18 +41,6 @@
 #include "crawl.h"
 #include "core.h"
 
-#define AG_CRAWL_CMD_CREATE  'C'    // create, but fail if the entry exists
-#define AG_CRAWL_CMD_PUT     'P'    // create-or-update
-#define AG_CRAWL_CMD_UPDATE  'U'    // update, but fail if the entry doesn't exist
-#define AG_CRAWL_CMD_DELETE  'D'    // delete, but fail if the entry doesn't exist
-#define AG_CRAWL_CMD_FINISH  'F'    // indicates that there are no more datasets to crawl
-
-// indexes into a single stanza
-#define AG_CRAWL_STANZA_CMD 0
-#define AG_CRAWL_STANZA_MD  1
-#define AG_CRAWL_STANZA_PATH 2
-#define AG_CRAWL_STANZA_TERM 3
-
 // copy a mode-string and path-string into an md_entry
 // only the type, mode, and name will be set.  Everything else will be left as-is
 // return 0 on success
@@ -68,7 +56,7 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
    uint64_t max_read_freshness = 0;
    uint64_t max_write_freshness = 0;
 
-   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 " %" PRIu64 " %" PRIu64 "\n", &type, &mode, &size, &max_read_freshness, &max_write_freshness );
+   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 " %" PRIu64 " %" PRIu64, &type, &mode, &size, &max_read_freshness, &max_write_freshness );
    if( rc != 5 ) {
       SG_error("Invalid mode string '%s'\n", md_linebuf );
       return -EINVAL;
@@ -78,13 +66,6 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
       SG_error("Invalid mode string type '%c'\n", type );
       return -EINVAL;
    }
-
-   // strip trailing '\n' 
-   if( path_linebuf[strlen(path_linebuf)-1] != '\n' ) {
-      return -EINVAL;
-   }
-
-   path_linebuf[strlen(path_linebuf)-1] = '\0';
 
    data->type = (type == 'D' ? MD_ENTRY_DIR : MD_ENTRY_FILE);
    data->mode = mode & 0666;    // force read-only for now
@@ -111,7 +92,7 @@ static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
    int rc = 0;
    char cmd_type = 0;
    
-   rc = sscanf( cmd_linebuf, "%c\n", &cmd_type );
+   rc = sscanf( cmd_linebuf, "%c", &cmd_type );
    if( rc != 1 ) {
       SG_error("Invalid command string '%s'\n", cmd_linebuf );
       return -EINVAL;
@@ -132,128 +113,263 @@ static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
 }
 
 
-// read a stanza from a FILE*
-// return 0 on success, and populate **lines (which must have at least 3 slots)
-// return -EINVAL if we did not find the terminating string
+// parse the stanza from its linebuf 
+// return 0 on success
 // return -ENOMEM on OOM
-// Recovery will be attempted by reading ahead to the next terminating string (if one is not found immediately)
-static int AG_crawl_read_stanza( FILE* input, char** lines ) {
+// return -EINVAL on invalid data
+static int AG_stanza_parse( struct AG_stanza* stanza ) {
 
    int rc = 0;
-   size_t len = 0;
-   ssize_t nr = 0;
-   int cnt = 0;
-   char* linebuf = NULL;
+   char* tmp = NULL;
+   char* tok = NULL;
+   char* str = stanza->linebuf;
+   int num_lines = 0;
 
-   for( int i = 0; i < 4; i++ ) {
-      lines[i] = NULL;
-   }
+   // break linebuf into lines 
+   while( 1 ) {
+      tok = strtok_r( str, "\n", &tmp );
+      str = NULL;
 
-   for( int i = 0; i < 3; i++ ) {
-    
-      linebuf = NULL;
-      len = 0;
-      nr = getline( &linebuf, &len, input );
-      if( nr < 0 ) {
-         
-         rc = -errno;
-         SG_error("getline rc = %d\n", rc);
+      if( tok == NULL ) {
+         // out of lines 
+         break;
+      }
+      if( strlen(tok) == 0 ) {
+         // out of lines
          break;
       }
 
-      // is this a premature terminator line?
-      else if( nr == 2 && linebuf[0] == '\0' ) {
-         SG_error("early terminator at stanza line %d\n", i );
+      SG_debug("Line: '%s'\n", tok );
+      stanza->lines[num_lines] = tok;
+      num_lines++;
+
+      if( num_lines > 4 ) {
+         // too many lines 
+         SG_error("Too many lines in stanza: %d\n", num_lines);
          rc = -EINVAL;
-         SG_safe_free( linebuf );
          break;
       }
-
-      lines[i] = linebuf;
    }
 
-   // read terminator 
-   linebuf = NULL;
-   len = 0;
-   nr = getline( &linebuf, &len, input );
-   if( nr < 0 ) {
-
-      rc = -errno;
-      SG_error("getline rc = %d\n", rc );
-   }
-   else if( nr != 2 || (nr >= 1 && linebuf[0] != '\0' )) {
-
-      // not a terminator 
-      SG_error("Missing terminator at end of stanza (got '%s')\n", linebuf);
-      SG_safe_free( linebuf );
-      
-      // try to consume until we find a terminator 
-      while( 1 ) {
-
-         linebuf = NULL;
-         len = 0;
-         nr = getline( &linebuf, &len, input );
-         if( nr == 2 && linebuf[0] == '\0' ) {
-            // termiated!
-            SG_error("Terminator found %d lines after end of stanza\n", cnt );
-            rc = -EINVAL;
-            SG_safe_free( linebuf );
-            break;
-         }
-
-         SG_safe_free( linebuf );
-         cnt++;
-      }
-   }
-   else {
-      
-      // got terminator 
-      SG_safe_free( linebuf );
+   if( rc < 0 ) {
+      return rc;
    }
 
-   if( rc != 0 ) {
-
-      // clean up 
-      for( int i = 0; i < 4; i++ ) {
-         if( lines[i] != NULL ) {
-            SG_safe_free( lines[i] );
-            lines[i] = NULL;
-         }
-      }
+   // last line must be terminator 
+   if( strcmp(stanza->lines[AG_CRAWL_STANZA_TERM], AG_CRAWL_STANZA_TERM_STR) != 0 ) {
+      SG_error("Invalid terminator: '%s'\n", stanza->lines[AG_CRAWL_STANZA_TERM] );
+      return rc;
    }
 
-   return rc;
+   // parse cmd 
+   rc = AG_crawl_parse_command( stanza->lines[AG_CRAWL_STANZA_CMD], &stanza->cmd );
+   if( rc < 0 ) {
+      SG_error("AG_crawl_parse_command rc = %d\n", rc );
+      return rc;
+   }
+
+   // parse metadata
+   rc = AG_crawl_parse_metadata( stanza->lines[AG_CRAWL_STANZA_MD], stanza->lines[AG_CRAWL_STANZA_PATH], &stanza->data );
+   if( rc < 0 ) {
+      SG_error("AG_crawl_parse_metadata rc = %d\n", rc );
+      return rc;
+   }
+
+   stanza->path = stanza->lines[AG_CRAWL_STANZA_PATH];
+   return 0;
 }
 
 
-// given a stanza, parse it into an md_entry 
+// free a stanza 
+int AG_stanza_free( struct AG_stanza* stanza ) {
+
+   if( stanza->linebuf != NULL ) {
+      SG_safe_free( stanza->linebuf );
+      stanza->linebuf = NULL;
+      memset( stanza->lines, 0, sizeof(char*) * 4 );
+   }
+
+   if( stanza->sock_fd >= 0 ) {
+      close(stanza->sock_fd);
+      stanza->sock_fd = -1;
+   }
+
+   md_entry_free( &stanza->data );
+
+   return 0;
+}
+
+// read the size, and if we succeed, allocate the linebuf and copy over the carryover
 // return 0 on success
-// return -EINVAL if the stanza is bad
-// return -ENOMEM on OOM 
-static int AG_crawl_parse_stanza( char** lines, int* cmd, char** path, struct md_entry* entry ) {
+// return 1 to try again
+// return -EPERM on failure
+// does not set the stanza's status 
+static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
 
-    int rc = 0;
+   int rc = 0;
+   ssize_t nr = 0;
+   int len = 0;
+   char* carryover_start = NULL;
 
-    rc = AG_crawl_parse_command( lines[AG_CRAWL_STANZA_CMD], cmd );
-    if( rc != 0 ) {
-       SG_error("Failed to parse command line, rc = %d\n", rc);
-       return -EINVAL;
-    }
+   nr = recv( fd, stanza->lenbuf + stanza->off, AG_STANZA_LENBUF_SIZE - stanza->off, 0 );
+   if( nr < 0 ) {
+      rc = -errno;
+      SG_error("recv(%d) rc = %d\n", fd, rc );
+      return -EPERM;
+   }
+   if( nr == 0 ) {
+      // EOF 
+      SG_error("recv(%d): EOF\n", fd );
+      return -EPERM;
+   }
 
-    *path = SG_strdup_or_null( lines[AG_CRAWL_STANZA_PATH] );
-    if( *path == NULL ) {
-       return -ENOMEM;
-    }
+   SG_debug("Stanza %p: read %zd linebuf length bytes (offset %jd, at %d)\n", stanza, nr, stanza->off, stanza->off + nr );
+   stanza->off += nr;
 
-    rc = AG_crawl_parse_metadata( lines[AG_CRAWL_STANZA_MD], *path, entry );
-    if( rc != 0 ) {
-       SG_error("Failed to parse metadata line, rc = %d\n", rc);
-       SG_safe_free( *path );
-       *path = NULL;
-       return -EINVAL;
-    }
+   // read size and colon?
+   rc = sscanf( stanza->lenbuf, "%d:", &len );
+   if( rc != 1 ) {
+      // not done reading yet
+      return 1;
+   }
 
-    return 0;
+   SG_debug("Stanza %p: %d-byte line buffer\n", stanza, len );
+
+   // allocate linebuf 
+   stanza->linebuf = SG_CALLOC( char, len + 1 );
+   if( stanza->linebuf == NULL ) {
+      return -EPERM;
+   }
+
+   stanza->size = len;
+
+   // copy in remnant 
+   carryover_start = strchr( stanza->lenbuf, ':' );
+   if( carryover_start == NULL ) {
+      // no remnant (should never happen)
+      SG_error("BUG: failed to fine carryover in %p\n", stanza->lenbuf);
+      exit(1);
+   }
+
+   carryover_start++;
+   strcpy( stanza->linebuf, carryover_start );
+   SG_debug("Stanza %p: carried over %zu bytes\n", stanza, strlen(stanza->linebuf) );
+
+   // clear lenbuf 
+   stanza->off = strlen(stanza->linebuf);
+   memset( stanza->lenbuf, 0, AG_STANZA_LENBUF_SIZE+1 );
+
+   return 0;
+}
+
+// read a stanza from a file stream, and populate an AG_stanza
+// return 0 on success
+// return 1 if we aren't done yet (EAGAIN)
+// return -EINVAL if we got invalid data
+// return -ENOMEM on OOM
+// return -EBADF if the process is dead
+// return -EPERM if the request failed for any other reason
+// Recovery will be attempted by reading ahead to the next terminating string (if one is not found immediately)
+static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
+
+   int rc = 0;
+   ssize_t nr = 0;
+
+   if( stanza->state == AG_STANZA_STATE_INVAL ) {
+      SG_debug("Stanza %p is in state INVAL\n", stanza );
+      return -EINVAL;
+   }
+
+   if( stanza->state == AG_STANZA_STATE_READY ) {
+      SG_debug("Stanza %p is in state READY\n", stanza);
+      return 0;
+   }
+
+   if( stanza->state == AG_STANZA_STATE_NEW ) {
+
+      // clear everything but the input file descriptor
+      fd = stanza->sock_fd;
+      memset( stanza, 0, sizeof(struct AG_stanza) );
+      stanza->sock_fd = fd;
+
+      stanza->state = AG_STANZA_STATE_CONT;
+      SG_debug("Stanza %p now in state CONT\n", stanza );
+   }
+
+   if( stanza->state == AG_STANZA_STATE_CONT ) {
+
+      if( stanza->linebuf == NULL ) {
+        
+         // set up linebuf
+         SG_debug("Stanza %p: set up linebuf\n", stanza);
+         rc = AG_stanza_linebuf_setup( fd, stanza );
+         if( rc < 0 ) {
+            SG_error("AG_stanza_linebuf_setup rc = %d\n", rc );
+            SG_debug("Stanza %p now in state INVAL\n", stanza );
+            stanza->state = AG_STANZA_STATE_INVAL;
+            return -EPERM;
+         }
+
+         else if( rc > 0 ) {
+            // try again 
+            return 1;
+         }
+      }
+       
+      // read linebuf data 
+      nr = recv( fd, stanza->linebuf + stanza->off, stanza->size - stanza->off, 0 );
+      if( nr <= 0 ) {
+
+         if( nr == 0 ) {
+            // EOF 
+            SG_error("recv(%d): EOF\n", fd );
+            SG_debug("Stanza %p now in state INVAL\n", stanza );
+            stanza->state = AG_STANZA_STATE_INVAL;
+            return -EPERM;
+         }
+
+         rc = -errno;
+         if( rc == -EAGAIN ) {
+            // consumed data; keep going 
+            return 1;
+         } 
+         else {
+             SG_error("recv(%d) rc = %d\n", fd, rc );
+             SG_debug("Stanza %p now in state INVAL\n", stanza );
+             stanza->state = AG_STANZA_STATE_INVAL;
+             return -EPERM;
+         }
+      }
+
+      SG_debug("Stanza %p consumed %zd bytes (%jd out of %d)\n", stanza, nr, stanza->off + nr, stanza->size );
+
+      stanza->off += nr;
+      if( stanza->off >= stanza->size ) {
+         // got all the data!
+         // parse it 
+         rc = AG_stanza_parse( stanza );
+         if( rc < 0 ) {
+            SG_error("AG_stanza_parse rc = %d\n", rc );
+            SG_debug("Stanza %p now in state INVAL\n", stanza );
+            stanza->state = AG_STANZA_STATE_INVAL;
+            return -EPERM;
+         }
+
+         // parsed!
+         SG_debug("Stanza %p now in state READY\n", stanza );
+         stanza->state = AG_STANZA_STATE_READY;
+         return 0;
+      }
+      else {
+
+         // have more to go 
+         return 1;
+      }
+   }
+
+   // invalid state 
+   SG_error("BUG: invalid state %d\n", stanza->state );
+   return -EINVAL;
 }
 
 
@@ -659,117 +775,170 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
 }
 
 
-// get the next metadata entry and command from the crawler, process it, and reply the result
-// return 0 on success, and fill in *block
-// return -ENOMEM on OOM 
-// return -EIO if the driver did not fulfill the request (driver error)
-// return -ENODATA if we couldn't request the data, for whatever reason (no processes free)
-// return -ENOTCONN if there is no driver
-int AG_crawl_next_entry( struct AG_state* core ) {
- 
+// put a new stanza for a process 
+// return 0 on success
+// return -ENOMEM on OOM
+int AG_stanza_set_new( AG_stanza_set_t* stanzas, pid_t pid, int sock_fd ) {
+
+   struct AG_stanza new_stanza;
+   int flags = 0;
    int rc = 0;
-   struct SG_proc_group* group = NULL;
-   struct SG_proc* proc = NULL;
-   struct SG_gateway* gateway = AG_state_gateway( core );
-   struct UG_state* ug_core = AG_state_ug( core );
-   int cmd = 0;
-   char* path = NULL;
-   struct md_entry ent;
-   int64_t result = 0;
-   SG_messages::DriverRequest driver_req;
-   char* lines[4] = {
-      NULL,
-      NULL,
-      NULL,
-      NULL
-   };
 
-   memset( &ent, 0, sizeof(struct md_entry) );
-   
-   UG_state_rlock( ug_core );
-   AG_state_rlock( core );  
+   memset( &new_stanza, 0, sizeof(struct AG_stanza) );
 
-   // find a crawler
-   group = SG_driver_get_proc_group( SG_gateway_driver(gateway), "crawl" );
-   if( group != NULL ) {
-      
-      // get a free process
-      proc = SG_proc_group_acquire( group );
-      if( proc == NULL ) {
-      
-         // nothing running
-         rc = -ENODATA;
-         goto AG_crawl_next_entry_finish;
+   new_stanza.state = AG_STANZA_STATE_NEW;
+   new_stanza.sock_fd = sock_fd;
+
+   // don't block
+   flags = fcntl( sock_fd, F_GETFL );
+   if( !(flags & O_NONBLOCK) ) {
+      rc = fcntl( sock_fd, F_SETFL, flags | O_NONBLOCK );
+      if( rc != 0 ) {
+         rc = -errno;
+         SG_error("fcntl(%d, O_NONBLOCK) rc = %d\n", sock_fd, rc );
+         return -EPERM;
       }
-    
-      // get the stanza 
-      rc = AG_crawl_read_stanza( SG_proc_stdout_f( proc ), lines );
-      if( rc < 0 ) {
-         SG_error("AG_crawl_read_stanza rc = %d\n", rc );
-         rc = -EIO;
-         goto AG_crawl_next_entry_finish;
-      }
+   }
 
-      // parse stanza
-      rc = AG_crawl_parse_stanza( lines, &cmd, &path, &ent );
+   try {
+      (*stanzas)[pid] = new_stanza;
+   }
+   catch( bad_alloc& ba ) {
+      return -ENOMEM;
+   }
 
-      for( int i = 0; i < 4; i++ ) {
-         if( lines[i] != NULL ) {
-            SG_safe_free( lines[i] );
-         }
-      }
+   return 0;   
+}
 
-      if( rc < 0 ) {
-         SG_error("AG_crawl_parse_stanza rc = %d\n", rc );
-         rc = -EIO;
-         goto AG_crawl_next_entry_finish;
-      }
 
-      // consume the stanza 
-      rc = AG_crawl_process( core, cmd, path, &ent );
-      result = rc;
-      if( rc < 0 ) {
-         SG_error("AG_crawl_process(%s) rc = %d\n", path, rc );
-         rc = 0;
-      }
-
-      if( rc > 0 ) {
-         // indicates that we're done crawling
-         rc = 1;
-         goto AG_crawl_next_entry_finish;
-      }
-
-      // send back the result 
-      rc = SG_proc_write_int64( SG_proc_stdin( proc ), result );
-      if( rc < 0 ) {
-         SG_error("SG_proc_write_int64(%d) rc = %d\n", SG_proc_stdin(proc), rc );
-         goto AG_crawl_next_entry_finish;
-      }
+// is a PID already present in a stanza set? 
+// return 1 if so
+// return 0 if not 
+int AG_stanza_set_has_pid( AG_stanza_set_t* stanzas, pid_t pid ) {
+   if( stanzas->find(pid) != stanzas->end() ) {
+      return 1;
    }
    else {
-      
-      // no way to do work--no process group 
-      rc = -ENOTCONN;
-   }
-   
-AG_crawl_next_entry_finish:
+      return 0;
+   } 
+}
 
-   if( group != NULL && proc != NULL ) {
-   
-      // reply the status 
-      rc = SG_proc_write_int64( SG_proc_stdin( proc ), rc );
+
+// build an FDSET out of stanzas
+// return maxfd
+int AG_stanza_set_make_fdset( AG_stanza_set_t* stanzas, fd_set* fds ) {
+
+   int sock = 0;
+   int maxfd = 0;
+
+   FD_ZERO( fds );
+   for( auto itr = stanzas->begin(); itr != stanzas->end(); itr++ ) {
+      sock = itr->second.sock_fd;
+      FD_SET(sock, fds);
+      maxfd = (sock > maxfd ? sock : maxfd);
+   }
+
+   return maxfd;
+}    
+
+
+// remove all stanzas with remotely-closed sockets 
+// return 0 on success 
+int AG_stanza_set_remove_badfds( AG_stanza_set_t* stanzas ) {
+
+   int rc = 0;
+   int sock = 0;
+
+   for( auto itr = stanzas->begin(); itr != stanzas->end(); ) {
+    
+      sock = itr->second.sock_fd;
+      rc = fcntl( sock, F_GETFL );
       if( rc < 0 ) {
-         SG_error("SG_proc_write_int64(%d) rc = %d\n", SG_proc_stdin(proc), rc );
+         rc = -errno;
+         SG_error("Stanza fd %d is bad (rc = %d)\n", sock, rc );
+
+         // clear it 
+         auto old_itr = itr;
+         itr++;
+
+         AG_stanza_free( &old_itr->second );
+         stanzas->erase( old_itr );
+      }
+      else {
+
+         itr++;
+      }
+   }
+
+   return 0;
+}
+
+
+// consume incoming stanzas from running crawl processes.
+// Update the given stanza set.
+// If a stanza is completed, then process it and remove it from the stanza set.
+// return 0 on success
+int AG_crawl_consume_stanzas( struct AG_state* core, AG_stanza_set_t* stanzas, fd_set* readable_fds ) {
+ 
+   int rc = 0;
+   int64_t result = 0;
+
+   pid_t pid = 0;
+   struct AG_stanza* stanza = NULL;
+
+   for( auto itr = stanzas->begin(); itr != stanzas->end(); ) {
+
+      pid = itr->first;
+      stanza = &itr->second; 
+
+      // readaable?
+      if( !FD_ISSET( stanza->sock_fd, readable_fds ) ) {
+         continue;
       }
 
-      SG_proc_group_release( group, proc );
+      // consume stanza data 
+      rc = AG_crawl_read_stanza( stanza->sock_fd, stanza );
+      if( rc > 0 ) {
+         // not done yet 
+         itr++;
+         rc = 0;
+         continue;
+      }
+
+      else if( rc < 0 ) {
+         // error 
+         SG_error("AG_crawl_read_stanza rc = %d\n", rc );
+         result = -EIO;
+         rc = 0;
+      }
+      else {
+          // got a stanza!
+          // process stanza
+          SG_debug("Process stanza from proc %d\n", (int)pid );
+          rc = AG_crawl_process( core, stanza->cmd, stanza->path, &stanza->data );
+          result = rc;
+          if( rc < 0 ) {
+             SG_error("AG_crawl_process(%s) (%d) rc = %d\n", stanza->path, pid, rc );
+          }
+      }
+
+      // reply the status 
+      rc = SG_proc_write_int64( stanza->sock_fd, result );
+      if( rc < 0 ) {
+         // will remove anyway
+         SG_error("SG_proc_write_int64(%d) rc = %d\n", stanza->sock_fd, rc );
+      }
+
+      // done with stanza 
+      auto old_itr = itr;
+      itr++;
+
+      SG_debug("Done with stanza from proc %d\n", (int)pid);
+      AG_stanza_free(stanza);
+      stanzas->erase(old_itr);
+
+      rc = 0;
    }
-
-   AG_state_unlock( core );
-   UG_state_unlock( ug_core );
-
-   SG_safe_free( path );
-   md_entry_free( &ent );
    
    return rc;
 }
