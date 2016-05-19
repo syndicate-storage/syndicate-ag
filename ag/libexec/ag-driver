@@ -24,20 +24,150 @@ import traceback
 import signal
 import json
 import time
+import threading
+import atexit
+import socket
 
 import syndicate.util.gateway as gateway
+
+# singleton crawl thread
+crawl_thread = None
+
+class CrawlThread( threading.Thread ):
+
+    def __init__(self, path, driver_mod):
+        super(CrawlThread, self).__init__()
+        self.running = False
+        self.sock = None
+        self.connection = None
+        self.address = None
+        self.path = path
+        self.driver_mod = driver_mod
+
+
+    @classmethod
+    def bind_path( cls, path ):
+        """
+        Start serving on a UNIX domain socket.
+        Return the socket on success
+        """
+        try:
+            os.unlink(path)
+        except:
+            if os.path.exists(path):
+                gateway.log_error("Failed to unlink '%s'" % path)
+                return None
+
+        try:
+            sock = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
+            sock.bind( path )
+
+            # only the AG should connect
+            sock.listen(1)
+            return sock
+
+        except Exception, e:
+            gateway.log_error("Failed to set up socket\n%s" % traceback.format_exc())
+            return None
+
+
+    @classmethod
+    def crawl_rendezvous( cls, cmd_dict ):
+        """
+        Crawl implementation for the gateway module.
+        Gets called by driver_mod.next_dataset()
+        """
+        global crawl_thread
+        assert crawl_thread
+
+        # feed back the dataset via the UNIX socket connection
+        gateway.write_metadata_command( crawl_thread.connection, cmd_dict )
+        rc = gateway.read_int( crawl_thread.connection )
+        return rc
+        
+
+    @classmethod
+    def crawl_stop( cls ):
+        """
+        Shut down the singleton thread.
+        Use as an atexit callback
+        """
+        global crawl_thread
+       
+        try:
+            crawl_thread.running = False
+            crawl_thread.sock.close()
+            crawl_thread.join()
+            crawl_thread = None
+        except Exception, e:
+            gateway.log_error(traceback.format_exc())
+            gateway.log_error("crawl_stop race")
+            return
+        
+
+    def run(self):
+        """
+        Main thread
+        """
+
+        have_more = True
+        finished = False
+        
+        self.running = True
+        self.sock = CrawlThread.bind_path( self.path )
+
+        if self.sock is None:
+            gateway.log_error("Failed to bind to '%s', bailing" % self.path)
+            return 
+
+        while self.running and have_more:
+            # next dataset 
+            try:
+
+                # set up connection to AG
+                connection, address = self.sock.accept()
+                self.connection = connection
+                self.address = address
+
+            except:
+                continue
+            
+            # serve up new dataset
+            try:
+                # NOTE: calls crawl_rendezvous() via gateway.crawl()
+                have_more = driver_mod.next_dataset( driver_mod.CONFIG, driver_mod.SECRETS )
+            except Exception, e:
+                gateway.log_error("next_dataset failed\n%s" % traceback.format_exc())
+                return 
+
+            if not have_more:
+                gateway.log_error("No more datasets")
+                if not finished:
+                   # send back a "finished" stanza
+                   gateway.log_error("Finished crawling")
+                   cmd = gateway.make_metadata_command( "finish", "directory", 0555, None, "/" )
+                   CrawlThread.crawl_rendezvous( cmd )
+                   finished = True
+
+                # we're done here
+                self.running = False
+
+                gateway.log_error("closing socket")
+                self.sock.close()
+                
+        return
 
 
 if __name__ == "__main__":
   
-   # it's okay if the driver doesn't have a 'serialize', 'deserialize', or 'refresh' method method 
+   # it's okay if the driver doesn't have a 'serialize', 'deserialize', or 'refresh' method 
    default_callbacks = {
       'serialize': None,
       'deserialize': None,
       'refresh': None
    }
 
-   usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'refresh', 'serialize', 'deserialize'], \
+   usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'crawl', 'serialize', 'deserialize'], \
                                              ['read', 'next_dataset', 'refresh', 'serialize', 'deserialize'],
                                              default_callbacks=default_callbacks )
   
@@ -82,51 +212,41 @@ if __name__ == "__main__":
          sys.stdout.flush()
          sys.stderr.flush()
 
+
    elif usage == "crawl":
 
-       have_more = True
-       finished = False
+       # canonical path to the UNIX domain socket
+       # must be formatted as "$IPC_ROOT/$PID.sock"
+       ipc_root = gateway.get_ipc_root()
+       unix_socket_path = os.path.join( ipc_root, "%s.sock" % os.getpid() )
+
+       # start serving dataset commands in a separate thread 
+       # save it globally, and configure the `gateway` package 
+       # to use it
+       crawl_thread = CrawlThread( unix_socket_path, driver_mod )
+       crawl_thread.daemon = True
+       gateway.set_crawl_rendezvous_func( CrawlThread.crawl_rendezvous )
+       atexit.register( CrawlThread.crawl_stop )
+       crawl_thread.start()
+
+       # begin listening for refreshes via stdin/stdout
        while True:
-
-           # feed the next dataset
-           if have_more:
-               try:
-                   have_more = driver_mod.next_dataset( driver_mod.CONFIG, driver_mod.SECRETS )
-               except Exception, e:
-                   print >> sys.stderr, "next_dataset failed"
-                   print >> sys.stderr, traceback.format_exc()
-                   sys.stderr.flush()
-                   sys.exit(4)
-
-           if not have_more:
-               if not finished:
-                   # send back a "finished" stanza 
-                   cmd = gateway.make_metadata_command( "finish", "directory", 0555, None, "/")
-                   gateway.write_metadata_command( sys.stdout, cmd )
-                   sys.stdout.flush()
-
-                   finished = True
-               else:
-                   # wait to die 
-                   time.sleep(1)
-
-   elif usage == "refresh":
-       while True:
-          request = gateway.read_request( sys.stdin )
-          if request is None:
+           request = gateway.read_request( sys.stdin )
+           if request is None:
+              gateway.log_error("FATAL: no request")
               sys.exit(3)
 
-          print >> sys.stderr, "refresh %s" % request.path 
-          try:
+           gateway.log_error("refresh '%s'" % request.path)
+           try:
               rc = driver_mod.refresh( request, driver_mod.CONFIG, driver_mod.SECRETS )
-          except Exception, e:
-              print >> sys.stderr, "refresh failed"
-              print >> sys.stderr, traceback.format_exc()
+           except Exception, e:
+              gateway.log_error("refresh failed on '%s'" % request.path)
+              gateway.log_error(traceback.format_exc())
               sys.exit(4) 
 
-          # return rc 
-          print >> sys.stderr, "refresh status: %s" % rc 
-          gateway.write_int( sys.stdout, rc )
-          sys.stdout.flush()
-          sys.stderr.flush()
+           gateway.log_error("refresh status: %s" % rc)
+           gateway.write_int( sys.stdout, rc )
+           sys.stdout.flush()
+           sys.stderr.flush()
+
 
