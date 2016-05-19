@@ -27,6 +27,8 @@
 
 #include <fskit/fskit.h>
 
+#include "crawl.h"
+
 #ifndef AG_DEFAULT_DRIVER_EXEC_STR
 #define AG_DEFAULT_DRIVER_EXEC_STR "/usr/local/lib/syndicate/ag-driver"
 #endif
@@ -42,7 +44,7 @@ int AG_shutdown( struct AG_state* state );
 
 struct SG_gateway* AG_state_gateway( struct AG_state* state );
 struct UG_state* AG_state_ug( struct AG_state* state );
-struct fskit_core* AG_state_fs( struct AG_state* state ); 
+struct fskit_core* AG_state_fs( struct AG_state* state );
 
 int AG_state_rlock( struct AG_state* state );
 int AG_state_wlock( struct AG_state* state );

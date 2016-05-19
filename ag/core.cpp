@@ -19,13 +19,12 @@
 #include "syndicate-ag.h"
 
 #define AG_DEFAULT_DRIVER_EXEC_STR  "/usr/local/lib/syndicate/ag-driver"
-#define AG_DRIVER_NUM_ROLES 5
+#define AG_DRIVER_NUM_ROLES 4
 char const* AG_DRIVER_ROLES[ AG_DRIVER_NUM_ROLES ] = {
    "serialize",
    "deserialize",
    "read",
-   "crawl",
-   "refresh"
+   "crawl"
 };
 
 // core AG control structure
@@ -154,3 +153,4 @@ struct fskit_core* AG_state_fs( struct AG_state* state ) {
 struct UG_state* AG_state_ug( struct AG_state* state ) {
    return state->ug_core;
 }
+
