@@ -556,7 +556,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
 
             // clear old cached state for the file
             // TODO: block-granularity 
-            md_cache_clear_file( cache, prev_ent.file_id, prev_ent.version );
+            md_cache_clear_file( cache, prev_ent.file_id, prev_ent.version, 0 );
          }
 
          rc = AG_crawl_blocks_reversion( ug, h, new_block_id_start, num_blocks, max_version + 1 );
