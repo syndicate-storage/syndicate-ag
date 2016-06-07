@@ -104,6 +104,10 @@ struct AG_state* AG_init( int argc, char** argv ) {
    // add AG server-side behaviors
    AG_server_install_methods( AG_state_gateway( ag ) ); 
 
+   // clear cached data 
+   gateway = UG_state_gateway( ug );
+   cache = SG_gateway_cache( gateway );
+   md_cache_evict_data( cache );
    return ag;
 }
 
