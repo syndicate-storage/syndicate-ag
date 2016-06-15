@@ -123,6 +123,9 @@ static int AG_server_block_get( struct SG_gateway* gateway, struct SG_request_da
    struct SG_proc_group* group = NULL;
    struct SG_proc* proc = NULL;
    SG_messages::DriverRequest driver_req;
+      
+   char debug_block[21];
+   memset( debug_block, 0, 21 );
 
    AG_state_rlock( core );
    
@@ -202,7 +205,10 @@ static int AG_server_block_get( struct SG_gateway* gateway, struct SG_request_da
          goto AG_server_block_get_finish;
       }
          
+      memcpy( debug_block, tmp_chunk.data, MIN(tmp_chunk.len, 20) );
       SG_chunk_free( &tmp_chunk );
+
+      SG_debug( "Block data for %" PRIX64 "[%" PRIu64 ".%" PRId64 "]: '%s'...\n", reqdat->file_id, reqdat->block_id, reqdat->block_version, debug_block );
    }
    else {
       
