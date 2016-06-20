@@ -24,7 +24,7 @@ BUILD_AG_DIRS     := $(BUILD_AG)
 CPPFLAGS := -std=c++11 -Wall -g -fPIC -fstack-protector -fstack-protector-all -pthread
 CPP      := c++ $(CPPFLAGS)
 INC      := -I. -I$(ROOT_DIR)
-DEFS     := -D_THREAD_SAFE -D__STDC_FORMAT_MACROS -D_DISTRO_$(DISTRO)
+DEFS     := -D_THREAD_SAFE -D__STDC_FORMAT_MACROS -D_DISTRO_$(DISTRO) $(EXTRA_DEFS)
 LIBINC   := -L$(BUILD_LIBDIR)
 
 # build setup
