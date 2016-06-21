@@ -20,20 +20,20 @@
  * metadata string
  * path string
  * terminator string
- 
+
  command string is a 1-character, newline-terminated line:
  * C for 'create'
  * U for 'update'
  * P for 'put'
  * D for 'delete'
- 
+
  mode string is a two-field newline-terminated line:
  * "$type $mode $size", where
     * $type is 'D' for directory or 'F' for file
     * $mode is the octal mode
     * $size is the size of the file
- 
- path string is a well-formed absolute path; accepted as-is minus the newline 
+
+ path string is a well-formed absolute path; accepted as-is minus the newline
 
  terminator string is a null character, and a newline.
 */
@@ -45,7 +45,7 @@
 // only the type, mode, and name will be set.  Everything else will be left as-is
 // return 0 on success
 // return -EINVAL on bad input
-// return -ENOMEM on OOM 
+// return -ENOMEM on OOM
 static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, struct md_entry* data ) {
 
    int rc = 0;
@@ -53,10 +53,10 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
    char type = 0;
    mode_t mode = 0;
    uint64_t size = 0;
-   uint64_t max_read_freshness = 0;
-   uint64_t max_write_freshness = 0;
+   int32_t max_read_freshness = 0;
+   int32_t max_write_freshness = 0;
 
-   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 " %" PRIu64 " %" PRIu64, &type, &mode, &size, &max_read_freshness, &max_write_freshness );
+   rc = sscanf( md_linebuf, "%c 0%o %" PRIu64 " %d %d", &type, &mode, &size, &max_read_freshness, &max_write_freshness );
    if( rc != 5 ) {
       SG_error("Invalid mode string '%s'\n", md_linebuf );
       return -EINVAL;
@@ -78,20 +78,20 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
       return -ENOMEM;
    }
 
-   SG_debug("Parsed (%c, %s, 0%o, %" PRIu64 ", read_ttl=%" PRIu64 ", write_ttl=%" PRIu64 ")\n", type, data->name, data->mode, data->size, data->max_read_freshness, data->max_write_freshness );
+   SG_debug("Parsed (%c, %s, 0%o, %" PRIu64 ", read_ttl=%d, write_ttl=%d)\n", type, data->name, data->mode, data->size, data->max_read_freshness, data->max_write_freshness );
 
    return 0;
 }
 
 
-// obtain the crawl command from a crawl command string 
+// obtain the crawl command from a crawl command string
 // return 0 on success, and set *cmd
 // return -EINVAL on bad input
 static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
 
    int rc = 0;
    char cmd_type = 0;
-   
+
    rc = sscanf( cmd_linebuf, "%c", &cmd_type );
    if( rc != 1 ) {
       SG_error("Invalid command string '%s'\n", cmd_linebuf );
@@ -113,7 +113,7 @@ static int AG_crawl_parse_command( char const* cmd_linebuf, int* cmd ) {
 }
 
 
-// parse the stanza from its linebuf 
+// parse the stanza from its linebuf
 // return 0 on success
 // return -ENOMEM on OOM
 // return -EINVAL on invalid data
@@ -125,13 +125,13 @@ static int AG_stanza_parse( struct AG_stanza* stanza ) {
    char* str = stanza->linebuf;
    int num_lines = 0;
 
-   // break linebuf into lines 
+   // break linebuf into lines
    while( 1 ) {
       tok = strtok_r( str, "\n", &tmp );
       str = NULL;
 
       if( tok == NULL ) {
-         // out of lines 
+         // out of lines
          break;
       }
       if( strlen(tok) == 0 ) {
@@ -144,7 +144,7 @@ static int AG_stanza_parse( struct AG_stanza* stanza ) {
       num_lines++;
 
       if( num_lines > 4 ) {
-         // too many lines 
+         // too many lines
          SG_error("Too many lines in stanza: %d\n", num_lines);
          rc = -EINVAL;
          break;
@@ -155,13 +155,13 @@ static int AG_stanza_parse( struct AG_stanza* stanza ) {
       return rc;
    }
 
-   // last line must be terminator 
+   // last line must be terminator
    if( strcmp(stanza->lines[AG_CRAWL_STANZA_TERM], AG_CRAWL_STANZA_TERM_STR) != 0 ) {
       SG_error("Invalid terminator: '%s'\n", stanza->lines[AG_CRAWL_STANZA_TERM] );
       return rc;
    }
 
-   // parse cmd 
+   // parse cmd
    rc = AG_crawl_parse_command( stanza->lines[AG_CRAWL_STANZA_CMD], &stanza->cmd );
    if( rc < 0 ) {
       SG_error("AG_crawl_parse_command rc = %d\n", rc );
@@ -180,7 +180,7 @@ static int AG_stanza_parse( struct AG_stanza* stanza ) {
 }
 
 
-// free a stanza 
+// free a stanza
 int AG_stanza_free( struct AG_stanza* stanza ) {
 
    if( stanza->linebuf != NULL ) {
@@ -203,7 +203,7 @@ int AG_stanza_free( struct AG_stanza* stanza ) {
 // return 0 on success
 // return 1 to try again
 // return -EPERM on failure
-// does not set the stanza's status 
+// does not set the stanza's status
 static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
 
    int rc = 0;
@@ -218,7 +218,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
       return -EPERM;
    }
    if( nr == 0 ) {
-      // EOF 
+      // EOF
       SG_error("recv(%d): EOF\n", fd );
       return -EPERM;
    }
@@ -235,7 +235,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
 
    SG_debug("Stanza %p: %d-byte line buffer\n", stanza, len );
 
-   // allocate linebuf 
+   // allocate linebuf
    stanza->linebuf = SG_CALLOC( char, len + 1 );
    if( stanza->linebuf == NULL ) {
       return -EPERM;
@@ -243,7 +243,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
 
    stanza->size = len;
 
-   // copy in remnant 
+   // copy in remnant
    carryover_start = strchr( stanza->lenbuf, ':' );
    if( carryover_start == NULL ) {
       // no remnant (should never happen)
@@ -255,7 +255,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
    strcpy( stanza->linebuf, carryover_start );
    SG_debug("Stanza %p: carried over %zu bytes\n", stanza, strlen(stanza->linebuf) );
 
-   // clear lenbuf 
+   // clear lenbuf
    stanza->off = strlen(stanza->linebuf);
    memset( stanza->lenbuf, 0, AG_STANZA_LENBUF_SIZE+1 );
 
@@ -299,7 +299,7 @@ static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
    if( stanza->state == AG_STANZA_STATE_CONT ) {
 
       if( stanza->linebuf == NULL ) {
-        
+
          // set up linebuf
          SG_debug("Stanza %p: set up linebuf\n", stanza);
          rc = AG_stanza_linebuf_setup( fd, stanza );
@@ -311,17 +311,17 @@ static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
          }
 
          else if( rc > 0 ) {
-            // try again 
+            // try again
             return 1;
          }
       }
-       
-      // read linebuf data 
+
+      // read linebuf data
       nr = recv( fd, stanza->linebuf + stanza->off, stanza->size - stanza->off, 0 );
       if( nr <= 0 ) {
 
          if( nr == 0 ) {
-            // EOF 
+            // EOF
             SG_error("recv(%d): EOF\n", fd );
             SG_debug("Stanza %p now in state INVAL\n", stanza );
             stanza->state = AG_STANZA_STATE_INVAL;
@@ -330,9 +330,9 @@ static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
 
          rc = -errno;
          if( rc == -EAGAIN ) {
-            // consumed data; keep going 
+            // consumed data; keep going
             return 1;
-         } 
+         }
          else {
              SG_error("recv(%d) rc = %d\n", fd, rc );
              SG_debug("Stanza %p now in state INVAL\n", stanza );
@@ -346,7 +346,7 @@ static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
       stanza->off += nr;
       if( stanza->off >= stanza->size ) {
          // got all the data!
-         // parse it 
+         // parse it
          rc = AG_stanza_parse( stanza );
          if( rc < 0 ) {
             SG_error("AG_stanza_parse rc = %d\n", rc );
@@ -362,12 +362,12 @@ static int AG_crawl_read_stanza( int fd, struct AG_stanza* stanza ) {
       }
       else {
 
-         // have more to go 
+         // have more to go
          return 1;
       }
    }
 
-   // invalid state 
+   // invalid state
    SG_error("BUG: invalid state %d\n", stanza->state );
    return -EINVAL;
 }
@@ -416,7 +416,7 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
 
    ent->file_id = ms_client_make_file_id();
 
-   // try to create or mkdir 
+   // try to create or mkdir
    if( ent->type == MD_ENTRY_FILE ) {
        clock_gettime( CLOCK_REALTIME, &now );
 
@@ -446,19 +446,19 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
        if( close_rc != 0 ) {
           SG_error("UG_close(%s) rc = %d\n", path, close_rc );
        }
-       
+
        h = NULL;
    }
    else {
       rc = UG_mkdir( ug, path, ent->mode );
       if( rc != 0 ) {
          SG_error("UG_mkdir(%s) rc = %d\n", path, rc );
-         goto AG_crawl_create_out;         
+         goto AG_crawl_create_out;
       }
    }
 
 AG_crawl_create_out:
-   
+
    if( rc != 0 && rc != -ENOMEM && rc != -EPERM && rc != -EACCES && rc != -EEXIST && rc != -ENOENT ) {
        rc = -EREMOTEIO;
    }
@@ -470,7 +470,7 @@ AG_crawl_create_out:
 // * reversion each block that already existed (i.e. on a size increase, reversion the blocks affecting bytes <= size)
 // * add blocks for new data (on size increase)
 // * if the size decreased, truncate the file
-// * post new metadata to the MS 
+// * post new metadata to the MS
 // if forced_reversion is true, then all blocks will be reversioned
 // This method will go and fetch the previous inode's metadata.
 // return 0 on success
@@ -501,7 +501,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
 
    if( ent->type == MD_ENTRY_FILE ) {
 
-      // see how we differ 
+      // see how we differ
       h = UG_open( ug, path, O_RDONLY, &rc );
       if( h == NULL ) {
          SG_error("UG_open('%s') rc = %d\n", path, rc );
@@ -532,7 +532,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
 
          SG_debug("\n\nReversion %" PRIu64 "-%" PRIu64 "; clear %" PRIX64 ".%" PRId64"\n\n", new_block_id_start, num_blocks, prev_ent.file_id, prev_ent.version );
 
-         // maximum block version so far... 
+         // maximum block version so far...
          for( uint64_t i = new_block_id_start; i <= num_blocks; i++ ) {
 
             rc = UG_getblockinfo( ug, i, &tmp_version, NULL, h );
@@ -555,7 +555,7 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
          if( clear_cache ) {
 
             // clear old cached state for the file
-            // TODO: block-granularity 
+            // TODO: block-granularity
             md_cache_clear_file( cache, prev_ent.file_id, prev_ent.version, 0 );
          }
 
@@ -579,23 +579,23 @@ static int AG_crawl_update( struct AG_state* core, char const* path, struct md_e
          UG_inode_set_read_stale( inode, false );
          UG_inode_set_refresh_time_now( inode );
          UG_inode_unlock( inode );
-         
+
          UG_handle_unlock( h );
          */
 
-         // truncate 
+         // truncate
          rc = UG_ftruncate( ug, ent->size, h );
          if( rc != 0 ) {
             SG_error("UG_truncate('%s', %" PRIu64 ") rc = %d\n", path, ent->size, rc );
             goto AG_crawl_update_out;
          }
 
-         // already updated on the MS, so nothing more to do 
+         // already updated on the MS, so nothing more to do
          goto AG_crawl_update_out;
       }
    }
 
-   // generate the metadata update... 
+   // generate the metadata update...
    update = SG_client_WRITE_data_new();
    if( update == NULL ) {
       rc = -ENOMEM;
@@ -647,7 +647,7 @@ AG_crawl_update_out:
 // return -ENOENT if the parent directory doesn't exist
 // return -EREMOTEIO on failure to communicate with the MS
 static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entry* ent ) {
-    
+
    int rc = 0;
 
    rc = AG_crawl_create( core, path, ent );
@@ -656,8 +656,8 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
    }
    else if( rc == -EEXIST ) {
 
-      // file already exists. 
-      // force reversion 
+      // file already exists.
+      // force reversion
       ent->version ++;
 
       // try to update, but update all blocks too
@@ -668,13 +668,13 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
    }
    else {
      SG_error("AG_crawl_create('%s') rc = %d\n", path, rc );
-   } 
+   }
 
    return rc;
 }
 
 
-// handle a delete 
+// handle a delete
 // return 0 on success
 // return -ENOMEM on OOM
 // return -EPERM if the operation could not be completed
@@ -685,7 +685,7 @@ static int AG_crawl_delete( struct AG_state* core, char const* path, struct md_e
 
    int rc = 0;
    struct UG_state* ug = AG_state_ug( core );
-   
+
    rc = UG_rmtree( ug, path );
    if( rc != 0 ) {
 
@@ -728,9 +728,9 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
 
          break;
       }
-   
+
       case AG_CRAWL_CMD_UPDATE: {
-     
+
          rc = AG_crawl_update( core, path, ent, false );
          if( rc != 0 ) {
              SG_error("AG_crawl_update(%s) rc = %d\n", path, rc );
@@ -738,19 +738,19 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
 
          break;
       }
-  
+
       case AG_CRAWL_CMD_PUT: {
 
          rc = AG_crawl_put( core, path, ent );
          if( rc  != 0 ) {
              SG_error("AG_crawl_put(%s) rc = %d\n", path, rc );
          }
-         
+
          break;
       }
 
       case AG_CRAWL_CMD_DELETE: {
-     
+
          rc = AG_crawl_delete( core, path, ent );
          if( rc != 0 ) {
              SG_error("AG_crawl_delete(%s) rc = %d\n", path, rc );
@@ -775,7 +775,7 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
 }
 
 
-// put a new stanza for a process 
+// put a new stanza for a process
 // return 0 on success
 // return -ENOMEM on OOM
 int AG_stanza_set_new( AG_stanza_set_t* stanzas, pid_t pid, int sock_fd ) {
@@ -807,20 +807,20 @@ int AG_stanza_set_new( AG_stanza_set_t* stanzas, pid_t pid, int sock_fd ) {
       return -ENOMEM;
    }
 
-   return 0;   
+   return 0;
 }
 
 
-// is a PID already present in a stanza set? 
+// is a PID already present in a stanza set?
 // return 1 if so
-// return 0 if not 
+// return 0 if not
 int AG_stanza_set_has_pid( AG_stanza_set_t* stanzas, pid_t pid ) {
    if( stanzas->find(pid) != stanzas->end() ) {
       return 1;
    }
    else {
       return 0;
-   } 
+   }
 }
 
 
@@ -839,25 +839,25 @@ int AG_stanza_set_make_fdset( AG_stanza_set_t* stanzas, fd_set* fds ) {
    }
 
    return maxfd;
-}    
+}
 
 
-// remove all stanzas with remotely-closed sockets 
-// return 0 on success 
+// remove all stanzas with remotely-closed sockets
+// return 0 on success
 int AG_stanza_set_remove_badfds( AG_stanza_set_t* stanzas ) {
 
    int rc = 0;
    int sock = 0;
 
    for( auto itr = stanzas->begin(); itr != stanzas->end(); ) {
-    
+
       sock = itr->second.sock_fd;
       rc = fcntl( sock, F_GETFL );
       if( rc < 0 ) {
          rc = -errno;
          SG_error("Stanza fd %d is bad (rc = %d)\n", sock, rc );
 
-         // clear it 
+         // clear it
          auto old_itr = itr;
          itr++;
 
@@ -879,7 +879,7 @@ int AG_stanza_set_remove_badfds( AG_stanza_set_t* stanzas ) {
 // If a stanza is completed, then process it and remove it from the stanza set.
 // return 0 on success
 int AG_crawl_consume_stanzas( struct AG_state* core, AG_stanza_set_t* stanzas, fd_set* readable_fds ) {
- 
+
    int rc = 0;
    int64_t result = 0;
 
@@ -889,24 +889,24 @@ int AG_crawl_consume_stanzas( struct AG_state* core, AG_stanza_set_t* stanzas, f
    for( auto itr = stanzas->begin(); itr != stanzas->end(); ) {
 
       pid = itr->first;
-      stanza = &itr->second; 
+      stanza = &itr->second;
 
       // readaable?
       if( !FD_ISSET( stanza->sock_fd, readable_fds ) ) {
          continue;
       }
 
-      // consume stanza data 
+      // consume stanza data
       rc = AG_crawl_read_stanza( stanza->sock_fd, stanza );
       if( rc > 0 ) {
-         // not done yet 
+         // not done yet
          itr++;
          rc = 0;
          continue;
       }
 
       else if( rc < 0 ) {
-         // error 
+         // error
          SG_error("AG_crawl_read_stanza rc = %d\n", rc );
          result = -EIO;
          rc = 0;
@@ -922,14 +922,14 @@ int AG_crawl_consume_stanzas( struct AG_state* core, AG_stanza_set_t* stanzas, f
           }
       }
 
-      // reply the status 
+      // reply the status
       rc = SG_proc_write_int64( stanza->sock_fd, result );
       if( rc < 0 ) {
          // will remove anyway
          SG_error("SG_proc_write_int64(%d) rc = %d\n", stanza->sock_fd, rc );
       }
 
-      // done with stanza 
+      // done with stanza
       auto old_itr = itr;
       itr++;
 
@@ -939,8 +939,6 @@ int AG_crawl_consume_stanzas( struct AG_state* core, AG_stanza_set_t* stanzas, f
 
       rc = 0;
    }
-   
+
    return rc;
 }
-
-
