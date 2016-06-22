@@ -122,7 +122,7 @@ class CrawlThread( threading.Thread ):
         self.sock = CrawlThread.bind_path( self.path )
 
         if self.sock is None:
-            gateway.log_error("Failed to bind to '%s', bailing" % self.path)
+            gateway.log_debug("Failed to bind to '%s', bailing" % self.path)
             return 
 
         while self.running and have_more:
@@ -145,10 +145,10 @@ class CrawlThread( threading.Thread ):
                 return 
 
             if not have_more:
-                gateway.log_error("No more datasets")
+                gateway.log_debug("No more datasets")
                 if not finished:
                    # send back a "finished" stanza
-                   gateway.log_error("Finished crawling")
+                   gateway.log_debug("Finished crawling")
                    cmd = gateway.make_metadata_command( "finish", "directory", 0555, None, "/" )
                    CrawlThread.crawl_rendezvous( cmd )
                    finished = True
