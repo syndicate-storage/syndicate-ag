@@ -5,3 +5,7 @@ export PREFIX=/usr
 
 %:
 	dh ${@}
+
+override_dh_auto_build:
+	dh_auto_build -- EXTRA_DEFS='-DAG_DEFAULT_DRIVER_EXEC_STR=\"/usr/lib/syndicate/ag-driver\"'
+
