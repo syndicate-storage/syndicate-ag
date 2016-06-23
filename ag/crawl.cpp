@@ -415,6 +415,12 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
    UG_handle_t* h = NULL;
 
    ent->file_id = ms_client_make_file_id();
+   clock_gettime( CLOCK_REALTIME, &now );
+ 
+   ent->mtime_sec = now.tv_sec;
+   ent->mtime_nsec = now.tv_nsec;
+   ent->ctime_sec = now.tv_sec;
+   ent->ctime_nsec = now.tv_nsec;
 
    // try to create or mkdir
    if( ent->type == MD_ENTRY_FILE ) {
@@ -422,11 +428,7 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
 
        ent->manifest_mtime_sec = now.tv_sec;
        ent->manifest_mtime_nsec = now.tv_nsec;
-       ent->mtime_sec = now.tv_sec;
-       ent->mtime_nsec = now.tv_nsec;
-       ent->ctime_sec = now.tv_sec;
-       ent->ctime_nsec = now.tv_nsec;
-
+      
        h = UG_publish( ug, path, ent, &rc );
        if( h == NULL ) {
           SG_error("UG_publish(%s) rc = %d\n", path, rc );
@@ -450,9 +452,9 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
        h = NULL;
    }
    else {
-      rc = UG_mkdir( ug, path, ent->mode );
+      rc = UG_publish_dir( ug, path, ent->mode, ent );
       if( rc != 0 ) {
-         SG_error("UG_mkdir(%s) rc = %d\n", path, rc );
+         SG_error("UG_publish_dir(%s) rc = %d\n", path, rc );
          goto AG_crawl_create_out;
       }
    }
