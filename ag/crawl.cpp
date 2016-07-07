@@ -452,6 +452,7 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
        h = NULL;
    }
    else {
+      ent->size = 4096;     // default directory size
       rc = UG_publish_dir( ug, path, ent->mode, ent );
       if( rc != 0 ) {
          SG_error("UG_publish_dir(%s) rc = %d\n", path, rc );
@@ -652,8 +653,11 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
 
    int rc = 0;
 
+   SG_debug("Put '%s'\n", path);
+
    rc = AG_crawl_create( core, path, ent );
    if( rc == 0 ) {
+      SG_debug("Created '%s'\n", path);
       return 0;
    }
    else if( rc == -EEXIST ) {
@@ -666,6 +670,9 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
       rc = AG_crawl_update( core, path, ent, true );
       if( rc != 0 ) {
          SG_error("AG_crawl_update('%s') rc = %d\n", path, rc );
+      }
+      else {
+        SG_debug("Updated '%s'\n", path);
       }
    }
    else {
