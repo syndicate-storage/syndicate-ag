@@ -223,7 +223,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
       return -EPERM;
    }
 
-   SG_debug("Stanza %p: read %zd linebuf length bytes (offset %jd, at %d)\n", stanza, nr, stanza->off, stanza->off + nr );
+   SG_debug("Stanza %p: read %zd linebuf length bytes (offset %jd, at %zd)\n", stanza, nr, stanza->off, (ssize_t)(stanza->off + nr) );
    stanza->off += nr;
 
    // read size and colon?
