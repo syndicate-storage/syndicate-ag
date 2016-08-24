@@ -27,6 +27,7 @@ import time
 import threading
 import atexit
 import socket
+import random
 
 import syndicate.util.gateway as gateway
 
@@ -122,9 +123,11 @@ class CrawlThread( threading.Thread ):
         self.sock = CrawlThread.bind_path( self.path )
 
         if self.sock is None:
-            gateway.log_debug("Failed to bind to '%s', bailing" % self.path)
+            gateway.log_error("Failed to bind to '%s', bailing" % self.path)
             return 
 
+        next_dataset_tries = 0
+        connect_tries = 0
         while self.running and have_more:
             # next dataset 
             try:
@@ -133,16 +136,29 @@ class CrawlThread( threading.Thread ):
                 connection, address = self.sock.accept()
                 self.connection = connection
                 self.address = address
+                connect_tries = 0
             except:
-                break
+                gateway.log_error("Caught global connection exception\n%s" % traceback.format_exc())
+                connect_tries += 1
+                delay = random.random() * (2**connect_tries) + 2**connect_tries
+                gateway.log_error("Waiting %s seconds before trying again" % delay)
+                time.sleep(delay)
+                continue
             
             # serve up new dataset
             try:
                 # NOTE: calls crawl_rendezvous() via gateway.crawl()
                 have_more = driver_mod.next_dataset( driver_mod.CONFIG, driver_mod.SECRETS )
+                next_dataset_tries = 0
             except Exception, e:
                 gateway.log_error("next_dataset failed\n%s" % traceback.format_exc())
-                return 
+                
+                gateway.log_error("Caught global 'next_dataset' exception\n%s" % traceback.format_exc())
+                next_dataset_tries += 1
+                delay = random.random() * (2**next_dataset_tries) + 2**next_dataset_tries
+                gateway.log_error("Waiting %s seconds before trying again" % delay)
+                time.sleep(delay)
+                continue
 
             if not have_more:
                 gateway.log_debug("No more datasets")
@@ -163,61 +179,70 @@ class CrawlThread( threading.Thread ):
 
 
 if __name__ == "__main__":
-  
-   # it's okay if the driver doesn't have a 'serialize', 'deserialize', or 'refresh' method 
-   default_callbacks = {
+
+    # it's okay if the driver doesn't have a 'serialize', 'deserialize', or 'refresh' method 
+    default_callbacks = {
       'serialize': None,
       'deserialize': None,
       'refresh': None
-   }
+    }
 
-   usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'crawl', 'serialize', 'deserialize'], \
+    usage, driver_mod = gateway.driver_setup( ['read', 'crawl', 'crawl', 'serialize', 'deserialize'], \
                                              ['read', 'next_dataset', 'refresh', 'serialize', 'deserialize'],
                                              default_callbacks=default_callbacks )
-  
-   # ready to go!
-   # tell the parent that we're ready 
-   print "0"
-   sys.stdout.flush()
 
-   if usage == "read":
+    # ready to go!
+    # tell the parent that we're ready 
+    print "0"
+    sys.stdout.flush()
+
+    if usage == "read":
       
       while True:
         
-         # read the path and metadata from stdin, write the chunk size and chunk to stdout
-         request = gateway.read_request( sys.stdin )
-         if request is None:
-            print >> sys.stderr, "No more requests"
-            sys.exit(3)
-         
-         chunk_fd = cStringIO.StringIO()
-         rc = 0
-
-         print >> sys.stderr, "read %s" % gateway.request_to_storage_path(request)
-
-         # get it 
+         tries = 0
          try:
-            rc = driver_mod.read( request, chunk_fd, driver_mod.CONFIG, driver_mod.SECRETS )
+             # read the path and metadata from stdin, write the chunk size and chunk to stdout
+             request = gateway.read_request( sys.stdin )
+             if request is None:
+                print >> sys.stderr, "No more requests"
+                sys.exit(3)
+             
+             chunk_fd = cStringIO.StringIO()
+             rc = 0
+
+             print >> sys.stderr, "read %s" % gateway.request_to_storage_path(request)
+
+             # get it 
+             try:
+                rc = driver_mod.read( request, chunk_fd, driver_mod.CONFIG, driver_mod.SECRETS )
+             except Exception, e:
+                print >> sys.stderr, "read failed"
+                print >> sys.stderr, traceback.format_exc()
+                sys.exit(4)
+             
+             chunk = chunk_fd.getvalue()
+             
+             # send back the data!
+             print >> sys.stderr, "read status: %s" % rc
+             gateway.write_int( sys.stdout, rc )
+
+             if rc == 0:
+                 print >> sys.stderr, "read %s bytes" % len(chunk)
+                 gateway.write_chunk( sys.stdout, chunk )
+
+             sys.stdout.flush()
+             sys.stderr.flush()
+             tries = 0
          except Exception, e:
-            print >> sys.stderr, "read failed"
-            print >> sys.stderr, traceback.format_exc()
-            sys.exit(4)
-         
-         chunk = chunk_fd.getvalue()
-         
-         # send back the data!
-         print >> sys.stderr, "read status: %s" % rc
-         gateway.write_int( sys.stdout, rc )
+             gateway.log_error("Caught global 'read' exception\n%s" % traceback.format_exc())
+             tries += 1
+             delay = random.random() * (2**tries) + 2**tries
+             gateway.log_error("Waiting %s seconds before trying again" % delay)
+             time.sleep(delay)
+             continue
 
-         if rc == 0:
-             print >> sys.stderr, "read %s bytes" % len(chunk)
-             gateway.write_chunk( sys.stdout, chunk )
-
-         sys.stdout.flush()
-         sys.stderr.flush()
-
-
-   elif usage == "crawl":
+    elif usage == "crawl":
 
        # canonical path to the UNIX domain socket
        # must be formatted as "$IPC_ROOT/$PID.sock"
@@ -233,23 +258,34 @@ if __name__ == "__main__":
        crawl_thread.start()
 
        # begin listening for refreshes via stdin/stdout
+       tries = 0
        while True:
-           request = gateway.read_request( sys.stdin )
-           if request is None:
-              gateway.log_error("FATAL: no request")
-              sys.exit(3)
-
-           gateway.log_error("refresh '%s'" % request.path)
            try:
-              rc = driver_mod.refresh( request, driver_mod.CONFIG, driver_mod.SECRETS )
-           except Exception, e:
-              gateway.log_error("refresh failed on '%s'" % request.path)
-              gateway.log_error(traceback.format_exc())
-              sys.exit(4) 
+               request = gateway.read_request( sys.stdin )
+               if request is None:
+                  gateway.log_error("FATAL: no request")
+                  sys.exit(3)
 
-           gateway.log_error("refresh status: %s" % rc)
-           gateway.write_int( sys.stdout, rc )
-           sys.stdout.flush()
-           sys.stderr.flush()
+               gateway.log_debug("refresh '%s'" % request.path)
+               try:
+                  rc = driver_mod.refresh( request, driver_mod.CONFIG, driver_mod.SECRETS )
+               except Exception, e:
+                  gateway.log_error("refresh failed on '%s'" % request.path)
+                  gateway.log_error(traceback.format_exc())
+                  sys.exit(4) 
+
+               gateway.log_debug("refresh status: %s" % rc)
+               gateway.write_int( sys.stdout, rc )
+               sys.stdout.flush()
+               sys.stderr.flush()
+               tries = 0
+           
+           except Exception, e:
+               gateway.log_error("Caught global 'crawl' exception\n%s" % traceback.format_exc())
+               tries += 1
+               delay = random.random() * (2**tries) + 2**tries
+               gateway.log_error("Waiting %s seconds before trying again" % delay)
+               time.sleep(delay)
+               continue
 
 
