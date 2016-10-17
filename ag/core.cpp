@@ -68,7 +68,7 @@ struct AG_state* AG_init( int argc, char** argv ) {
    md_opts_default( overrides );
    md_opts_set_client( overrides, false );
    md_opts_set_gateway_type( overrides, SYNDICATE_AG );
-   md_opts_set_driver_config( overrides, AG_DEFAULT_DRIVER_EXEC_STR, AG_DRIVER_ROLES, AG_DRIVER_NUM_ROLES );
+   md_opts_set_driver_config( overrides, AG_DEFAULT_DRIVER_EXEC_STR, AG_DRIVER_ROLES, 1, AG_DRIVER_NUM_ROLES );
 
    ag = SG_CALLOC( struct AG_state, 1 );
    if( ag == NULL ) {
