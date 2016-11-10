@@ -416,7 +416,7 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
 
    ent->file_id = ms_client_make_file_id();
    clock_gettime( CLOCK_REALTIME, &now );
- 
+
    ent->mtime_sec = now.tv_sec;
    ent->mtime_nsec = now.tv_nsec;
    ent->ctime_sec = now.tv_sec;
@@ -726,6 +726,7 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
    // enforce these...
    ent->coordinator = SG_gateway_id( gateway );
    ent->volume = ms_client_get_volume_id( ms );
+   ent->owner = SG_gateway_user_id( gateway );
 
    switch( cmd ) {
       case AG_CRAWL_CMD_CREATE: {
