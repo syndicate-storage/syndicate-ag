@@ -724,9 +724,9 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
    struct ms_client* ms = SG_gateway_ms( gateway );
 
    // enforce these...
+   ent->owner = SG_gateway_user_id( gateway );
    ent->coordinator = SG_gateway_id( gateway );
    ent->volume = ms_client_get_volume_id( ms );
-   ent->owner = SG_gateway_user_id( gateway );
 
    switch( cmd ) {
       case AG_CRAWL_CMD_CREATE: {
