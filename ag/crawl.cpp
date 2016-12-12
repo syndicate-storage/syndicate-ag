@@ -223,7 +223,7 @@ static int AG_stanza_linebuf_setup( int fd, struct AG_stanza* stanza ) {
       return -EPERM;
    }
 
-   SG_debug("Stanza %p: read %zd linebuf length bytes (offset %jd, at %d)\n", stanza, nr, stanza->off, stanza->off + nr );
+   SG_debug("Stanza %p: read %zd linebuf length bytes (offset %jd, at %zd)\n", stanza, nr, stanza->off, (ssize_t)(stanza->off + nr) );
    stanza->off += nr;
 
    // read size and colon?
@@ -415,6 +415,12 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
    UG_handle_t* h = NULL;
 
    ent->file_id = ms_client_make_file_id();
+   clock_gettime( CLOCK_REALTIME, &now );
+
+   ent->mtime_sec = now.tv_sec;
+   ent->mtime_nsec = now.tv_nsec;
+   ent->ctime_sec = now.tv_sec;
+   ent->ctime_nsec = now.tv_nsec;
 
    // try to create or mkdir
    if( ent->type == MD_ENTRY_FILE ) {
@@ -422,11 +428,7 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
 
        ent->manifest_mtime_sec = now.tv_sec;
        ent->manifest_mtime_nsec = now.tv_nsec;
-       ent->mtime_sec = now.tv_sec;
-       ent->mtime_nsec = now.tv_nsec;
-       ent->ctime_sec = now.tv_sec;
-       ent->ctime_nsec = now.tv_nsec;
-
+      
        h = UG_publish( ug, path, ent, &rc );
        if( h == NULL ) {
           SG_error("UG_publish(%s) rc = %d\n", path, rc );
@@ -450,9 +452,10 @@ static int AG_crawl_create( struct AG_state* core, char const* path, struct md_e
        h = NULL;
    }
    else {
-      rc = UG_mkdir( ug, path, ent->mode );
+      ent->size = 4096;     // default directory size
+      rc = UG_publish_dir( ug, path, ent->mode, ent );
       if( rc != 0 ) {
-         SG_error("UG_mkdir(%s) rc = %d\n", path, rc );
+         SG_error("UG_publish_dir(%s) rc = %d\n", path, rc );
          goto AG_crawl_create_out;
       }
    }
@@ -650,8 +653,11 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
 
    int rc = 0;
 
+   SG_debug("Put '%s'\n", path);
+
    rc = AG_crawl_create( core, path, ent );
    if( rc == 0 ) {
+      SG_debug("Created '%s'\n", path);
       return 0;
    }
    else if( rc == -EEXIST ) {
@@ -664,6 +670,9 @@ static int AG_crawl_put( struct AG_state* core, char const* path, struct md_entr
       rc = AG_crawl_update( core, path, ent, true );
       if( rc != 0 ) {
          SG_error("AG_crawl_update('%s') rc = %d\n", path, rc );
+      }
+      else {
+        SG_debug("Updated '%s'\n", path);
       }
    }
    else {
@@ -715,6 +724,7 @@ int AG_crawl_process( struct AG_state* core, int cmd, char const* path, struct m
    struct ms_client* ms = SG_gateway_ms( gateway );
 
    // enforce these...
+   ent->owner = SG_gateway_user_id( gateway );
    ent->coordinator = SG_gateway_id( gateway );
    ent->volume = ms_client_get_volume_id( ms );
 
