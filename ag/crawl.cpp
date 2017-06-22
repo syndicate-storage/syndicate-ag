@@ -68,7 +68,7 @@ static int AG_crawl_parse_metadata( char const* md_linebuf, char* path_linebuf, 
    }
 
    data->type = (type == 'D' ? MD_ENTRY_DIR : MD_ENTRY_FILE);
-   data->mode = mode & 0666;    // force read-only for now
+   data->mode = mode & 0755;    // force read-only for now, except for us
    data->size = size;
    data->name = md_basename( path_linebuf, NULL );
    data->max_read_freshness = max_read_freshness;
